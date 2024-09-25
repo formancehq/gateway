@@ -1,14 +1,13 @@
 VERSION 0.8
 
-IMPORT github.com/formancehq/earthly:tags/v0.15.0 AS core
-IMPORT ../.. AS stack
-IMPORT .. AS ee
+IMPORT github.com/formancehq/earthly:tags/v0.16.0 AS core
+
+
 
 FROM core+base-image
 
 sources:
-    WORKDIR src
-    WORKDIR /src/ee/gateway
+    WORKDIR /src
     COPY go.* .
     COPY --dir internal .
     COPY --dir pkg .
@@ -18,7 +17,7 @@ sources:
 compile:
     FROM core+builder-image
     COPY (+sources/*) /src
-    WORKDIR /src/ee/gateway
+    WORKDIR /src
     ARG VERSION=latest
     DO --pass-args core+GO_COMPILE --VERSION=$VERSION
 
@@ -42,13 +41,13 @@ deploy:
     RUN kubectl patch Versions.formance.com default -p "{\"spec\":{\"gateway\": \"${tag}\"}}" --type=merge
 
 deploy-staging:
-    BUILD --pass-args stack+deployer-module --MODULE=gateway
+    BUILD --pass-args core+deployer-module --MODULE=gateway
 lint:
     FROM core+builder-image
     COPY (+sources/*) /src
     COPY --pass-args +tidy/go.* .
-    WORKDIR /src/ee/gateway
-    DO --pass-args stack+GO_LINT
+    WORKDIR /src
+    DO --pass-args core+GO_LINT
     SAVE ARTIFACT internal AS LOCAL internal
     SAVE ARTIFACT pkg AS LOCAL pkg
     SAVE ARTIFACT main.go AS LOCAL main.go
@@ -56,7 +55,7 @@ lint:
 tests:
     FROM core+builder-image
     COPY (+sources/*) /src
-    WORKDIR /src/ee/gateway
+    WORKDIR /src
     DO --pass-args core+GO_TESTS
 
 pre-commit:
@@ -72,8 +71,11 @@ openapi:
 tidy:
     FROM core+builder-image
     COPY --pass-args (+sources/src) /src
-    WORKDIR /src/ee/gateway
-    DO --pass-args stack+GO_TIDY
+    WORKDIR /src
+    DO --pass-args core+GO_TIDY
 
 release:
-    BUILD --pass-args stack+goreleaser --path=ee/gateway
+    FROM core+builder-image
+    ARG mode=local
+    COPY --dir . /src
+    DO core+GORELEASER --mode=$mode
