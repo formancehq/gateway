@@ -11,7 +11,7 @@ require (
 	github.com/IBM/sarama v1.43.3
 	github.com/ThreeDotsLabs/watermill v1.3.7
 	github.com/ThreeDotsLabs/watermill-kafka/v3 v3.0.5
-	github.com/ThreeDotsLabs/watermill-nats/v2 v2.1.1
+	github.com/ThreeDotsLabs/watermill-nats/v2 v2.1.2
 	github.com/caddyserver/caddy/v2 v2.8.4
 	github.com/formancehq/go-libs v1.7.1
 	github.com/golang-jwt/jwt/v5 v5.2.1
