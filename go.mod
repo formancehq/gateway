@@ -16,7 +16,7 @@ require (
 	github.com/formancehq/go-libs v1.6.0
 	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/google/uuid v1.6.0
-	github.com/nats-io/nats.go v1.38.0
+	github.com/nats-io/nats.go v1.39.0
 	github.com/pkg/errors v0.9.1
 	github.com/xdg-go/scram v1.1.2
 	go.uber.org/zap v1.27.0
