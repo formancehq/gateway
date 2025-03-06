@@ -1,7 +1,6 @@
 module github.com/formancehq/stack/components/gateway
 
 go 1.22.3
-
 toolchain go1.23.4
 
 // caddy use an old version of ristretto while go libs use v1.0.0
@@ -20,7 +19,7 @@ require (
 	github.com/pkg/errors v0.9.1
 	github.com/xdg-go/scram v1.1.2
 	go.uber.org/zap v1.27.0
-	golang.org/x/sync v0.10.0
+	golang.org/x/sync v0.12.0
 )
 
 require (
