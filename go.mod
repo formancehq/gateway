@@ -1,8 +1,7 @@
 module github.com/formancehq/stack/components/gateway
 
 go 1.22.3
-
-toolchain go1.23.4
+toolchain go1.24.1
 
 // caddy use an old version of ristretto while go libs use v1.0.0
 replace github.com/dgraph-io/ristretto v1.0.0 => github.com/dgraph-io/ristretto v0.1.0
@@ -16,7 +15,7 @@ require (
 	github.com/formancehq/go-libs v1.6.0
 	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/google/uuid v1.6.0
-	github.com/nats-io/nats.go v1.38.0
+	github.com/nats-io/nats.go v1.41.1
 	github.com/pkg/errors v0.9.1
 	github.com/xdg-go/scram v1.1.2
 	go.uber.org/zap v1.27.0
@@ -112,7 +111,7 @@ require (
 	github.com/jcmturner/gokrb5/v8 v8.4.4 // indirect
 	github.com/jcmturner/rpc/v2 v2.0.3 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
-	github.com/klauspost/compress v1.17.11 // indirect
+	github.com/klauspost/compress v1.18.0 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.9 // indirect
 	github.com/lib/pq v1.10.9 // indirect
 	github.com/libdns/libdns v0.2.2 // indirect
