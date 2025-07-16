@@ -14,7 +14,7 @@ require (
 	github.com/ThreeDotsLabs/watermill-nats/v2 v2.1.2
 	github.com/caddyserver/caddy/v2 v2.9.1
 	github.com/formancehq/go-libs v1.6.0
-	github.com/golang-jwt/jwt/v5 v5.2.1
+	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/google/uuid v1.6.0
 	github.com/nats-io/nats.go v1.38.0
 	github.com/pkg/errors v0.9.1
