@@ -27,7 +27,7 @@ jobs:
   Dirty:
     runs-on: "shipfox-2vcpu-ubuntu-2404"
     steps:
-      - uses: 'actions/checkout@v4'
+      - uses: 'actions/checkout@v5'
         with:
           fetch-depth: 0
       - name: Setup Env
@@ -58,7 +58,7 @@ jobs:
     needs:
       - Dirty
     steps:
-      - uses: 'actions/checkout@v4'
+      - uses: 'actions/checkout@v5'
         with:
           fetch-depth: 0
       - name: Setup Env
@@ -81,7 +81,7 @@ jobs:
     needs:
       - Dirty
     steps:
-      - uses: 'actions/checkout@v4'
+      - uses: 'actions/checkout@v5'
         with:
           fetch-depth: 0
       - name: Setup Env
@@ -122,7 +122,7 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           version: "latest"
-      - uses: 'actions/checkout@v4'
+      - uses: 'actions/checkout@v5'
         with:
           fetch-depth: 0
       - name: Tailscale
