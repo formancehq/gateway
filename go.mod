@@ -10,7 +10,7 @@ replace github.com/dgraph-io/ristretto v1.0.0 => github.com/dgraph-io/ristretto 
 require (
 	github.com/IBM/sarama v1.45.2
 	github.com/ThreeDotsLabs/watermill v1.4.7
-	github.com/ThreeDotsLabs/watermill-kafka/v3 v3.0.6
+	github.com/ThreeDotsLabs/watermill-kafka/v3 v3.1.1
 	github.com/ThreeDotsLabs/watermill-nats/v2 v2.1.3
 	github.com/caddyserver/caddy/v2 v2.9.1
 	github.com/formancehq/go-libs v1.6.0
