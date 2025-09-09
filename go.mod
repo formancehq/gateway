@@ -2,7 +2,7 @@ module github.com/formancehq/stack/components/gateway
 
 go 1.23.0
 
-toolchain go1.23.4
+toolchain go1.25.1
 
 // caddy use an old version of ristretto while go libs use v1.0.0
 replace github.com/dgraph-io/ristretto v1.0.0 => github.com/dgraph-io/ristretto v0.1.0
