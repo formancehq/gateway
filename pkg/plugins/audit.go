@@ -389,6 +389,8 @@ func (a Audit) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.
 		publish.NewMessage(
 			r.Context(),
 			messages.NewAuditMessagePayload(
+				r.Context(),
+				r,
 				a.logger,
 				request,
 				response,
