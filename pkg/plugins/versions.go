@@ -285,7 +285,7 @@ func serviceVersion(
 	if err != nil {
 		return "", fmt.Errorf("failed to get version for %s: %w", versionEndpoint, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("failed to get version for %s: %s", versionEndpoint, resp.Status)
@@ -312,7 +312,7 @@ func serviceHealth(
 	if err != nil {
 		return false, fmt.Errorf("failed to get health for %s: %w", healthEndpoint, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return false, fmt.Errorf("wrong status code for health endpoint %s: %d", healthEndpoint, resp.StatusCode)

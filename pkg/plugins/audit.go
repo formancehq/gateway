@@ -364,7 +364,7 @@ func (a Audit) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.
 
 	if len(body) > 0 {
 		request.Body = string(body)
-		r.Body.Close()
+		_ = r.Body.Close()
 		// Restore the io.ReadCloser to its original state
 		r.Body = io.NopCloser(bytes.NewBuffer(body))
 	}
