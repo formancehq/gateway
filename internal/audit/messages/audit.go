@@ -12,7 +12,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/formancehq/go-libs/publish"
+	"github.com/formancehq/go-libs/v3/publish"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
@@ -54,6 +54,7 @@ type Actor struct {
 	OrganizationID string `json:"organization_id"`
 	StackID        string `json:"stack_id"`
 	IPAddress      string `json:"ip_address"`
+	JWTVerified    bool   `json:"jwt_verified"`
 }
 
 type HTTP struct {
