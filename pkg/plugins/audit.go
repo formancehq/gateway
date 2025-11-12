@@ -162,10 +162,23 @@ func parseAuditCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, e
 					return nil, h.Errf("failed to parse publisher_nats_max_reconnects_wait: %v", err)
 				}
 				a.PublisherNatsMaxReconnectsWait = res
+			case "topic_name":
+				var topicName string
+				if !h.AllArgs(&topicName) {
+					return nil, h.Errf("expected one string value")
+				}
+				a.TopicName = topicName
 			default:
 				return nil, h.Errf("unrecognized option: %s", key)
 			}
 		}
+	}
+
+	if a.TopicName == "" {
+		if os.Getenv("STACK") == "" {
+			return nil, fmt.Errorf("STACK environment variable is not set and topic_name parameter is not defined")
+		}
+		a.TopicName = os.Getenv("STACK") + "-audit"
 	}
 
 	return a, nil
@@ -193,9 +206,6 @@ func (a *Audit) Provision(ctx caddy.Context) error {
 			return new(bytes.Buffer)
 		},
 	}
-
-	// TODO(gfyrag): do not use env var directly!
-	a.TopicName = os.Getenv("STACK") + "-audit"
 
 	if a.PublisherKafkaEnabled {
 		return a.provisionKafkaPublisher()
