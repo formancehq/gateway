@@ -131,7 +131,10 @@ func initKeySet(ctx context.Context, issuerURL string, logger *zap.Logger) {
 			return
 		}
 
-		resp, err := http.DefaultClient.Do(req)
+		client := &http.Client{
+			Timeout: 30 * time.Second,
+		}
+		resp, err := client.Do(req)
 		if err != nil {
 			logger.Error("failed to fetch JWKS", zap.Error(err))
 			return
