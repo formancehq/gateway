@@ -8,11 +8,16 @@ permissions:
 
 jobs:
   GoReleaser:
-    runs-on: "shipfox-4vcpu-ubuntu-2404"
+    runs-on: "ubuntu-latest"
     steps:
       - uses: 'actions/checkout@v4'
         with:
           fetch-depth: 0
+      - uses: earthly/actions-setup@v1
+        with:
+          github-token: ${{ inputs.token }}
+          version: "latest"
+          use-cache: true
       - name: Setup Env
         uses: ./.github/actions/env
         with:

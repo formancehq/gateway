@@ -16,7 +16,7 @@ jobs:
   PR:
     if: github.event_name == 'pull_request'
     name: Check PR Title
-    runs-on: shipfox-2vcpu-ubuntu-2404
+    runs-on: "shipfox-4vcpu-ubuntu-2404"
     permissions:
       statuses: write
     steps:
@@ -25,28 +25,25 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   Dirty:
-    runs-on: "shipfox-2vcpu-ubuntu-2404"
+    runs-on: "shipfox-4vcpu-ubuntu-2404"
     steps:
       - uses: 'actions/checkout@v4'
         with:
           fetch-depth: 0
       - name: Setup Env
-        uses: ./.github/actions/env
+        uses: ./.github/actions/default
         with:
           token: ${{ secrets.NUMARY_GITHUB_TOKEN }}
       - run: >
-          earthly
-          --allow-privileged
-          --secret SPEAKEASY_API_KEY=$SPEAKEASY_API_KEY
-          ${{ contains(github.event.pull_request.labels.*.name, 'no-cache') && '--no-cache' || '' }}
-          +pre-commit
+          nix --extra-experimental-features "nix-command" --extra-experimental-features "flakes"
+          develop --impure --command just pre-commit
         env:
           SPEAKEASY_API_KEY: ${{ secrets.SPEAKEASY_API_KEY }}
       - name: Get changed files
         id: changed-files
         shell: bash
         run: |
-          hasChanged=$(git status --porcelain) 
+          hasChanged=$(git status --porcelain)
           if (( $(echo ${#hasChanged}) != 0 )); then
             git status
             echo "There are changes in the repository"
@@ -62,18 +59,18 @@ jobs:
         with:
           fetch-depth: 0
       - name: Setup Env
-        uses: ./.github/actions/env
+        uses: ./.github/actions/default
         with:
           token: ${{ secrets.NUMARY_GITHUB_TOKEN }}
       - run: >
-          earthly
-          --no-output
-          --allow-privileged
-          --secret SPEAKEASY_API_KEY=$SPEAKEASY_API_KEY
-          ${{ contains(github.event.pull_request.labels.*.name, 'no-cache') && '--no-cache' || '' }}
-          +tests
+          nix --extra-experimental-features "nix-command" --extra-experimental-features "flakes"
+          develop --impure --command just tests
+      - name: Upload coverage reports to Codecov with GitHub Action
+        uses: codecov/codecov-action@v5.4.3
+        with:
+          files: ./coverage.txt
         env:
-          SPEAKEASY_API_KEY: ${{ secrets.SPEAKEASY_API_KEY }}
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   GoReleaser:
     runs-on: "shipfox-4vcpu-ubuntu-2404"
@@ -85,7 +82,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Setup Env
-        uses: ./.github/actions/env
+        uses: ./.github/actions/default
         with:
           token: ${{ secrets.NUMARY_GITHUB_TOKEN }}
       - name: Login to GitHub Container Registry
@@ -95,15 +92,8 @@ jobs:
           username: "NumaryBot"
           password: ${{ secrets.NUMARY_GITHUB_TOKEN }}
       - run: >
-          earthly
-          --no-output
-          --allow-privileged
-          --secret SPEAKEASY_API_KEY=$SPEAKEASY_API_KEY
-          --secret GITHUB_TOKEN=$GITHUB_TOKEN
-          --secret FURY_TOKEN=$FURY_TOKEN
-          --secret GORELEASER_KEY=$GORELEASER_KEY
-          ${{ contains(github.event.pull_request.labels.*.name, 'no-cache') && '--no-cache' || '' }}
-          +release --mode=ci
+          nix --extra-experimental-features "nix-command" --extra-experimental-features "flakes" 
+          develop --impure --command just release-ci
         env:
           GITHUB_TOKEN: ${{ secrets.NUMARY_GITHUB_TOKEN }}
           SPEAKEASY_API_KEY: ${{ secrets.SPEAKEASY_API_KEY }}
@@ -111,8 +101,8 @@ jobs:
           GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
 
   Deploy:
-    runs-on: "shipfox-2vcpu-ubuntu-2404"
-    if: contains(github.event.pull_request.labels.*.name, 'deploy-staging') || github.ref == 'refs/heads/main'
+    runs-on: "ubuntu-latest"
+    if: github.ref == 'refs/heads/main'
     environment: staging
     needs:
       - GoReleaser
@@ -134,7 +124,7 @@ jobs:
       - name: "Deploy in staging"
         env:
           TAG: ${{ github.sha }}
-          COMPONENT: gateway
+          COMPONENT: payments
           ARGOCD_REGION_AUTH_TOKEN: ${{ secrets.ARGOCD_REGION_AUTH_TOKEN }}
         run: >
           earthly  

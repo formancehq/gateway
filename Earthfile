@@ -41,40 +41,8 @@ deploy:
 
 deploy-staging:
     BUILD --pass-args core+deploy-staging
-lint:
-    FROM core+builder-image
-    COPY (+sources/*) /src
-    COPY --pass-args +tidy/go.* .
-    WORKDIR /src
-    DO --pass-args core+GO_LINT
-    SAVE ARTIFACT internal AS LOCAL internal
-    SAVE ARTIFACT pkg AS LOCAL pkg
-    SAVE ARTIFACT main.go AS LOCAL main.go
-
-tests:
-    FROM core+builder-image
-    COPY (+sources/*) /src
-    WORKDIR /src
-    DO --pass-args core+GO_TESTS
-
-pre-commit:
-    WAIT
-      BUILD --pass-args +tidy
-    END
-    BUILD --pass-args +lint
 
 openapi:
     COPY ./openapi.yaml .
     SAVE ARTIFACT ./openapi.yaml
 
-tidy:
-    FROM core+builder-image
-    COPY --pass-args (+sources/src) /src
-    WORKDIR /src
-    DO --pass-args core+GO_TIDY
-
-release:
-    FROM core+builder-image
-    ARG mode=local
-    COPY --dir . /src
-    DO core+GORELEASER --mode=$mode
