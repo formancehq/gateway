@@ -40,7 +40,11 @@ type Audit struct {
 	bufPool   *sync.Pool        `json:"-"`
 	publisher message.Publisher `json:"-"`
 
-	TopicName string `json:"topic_name,omitempty"`
+	TopicName       string `json:"topic_name,omitempty"`
+	OrganizationID  string `json:"organization_id,omitempty"`
+	StackID         string `json:"stack_id,omitempty"`
+	AuthIssuer      string `json:"auth_issuer,omitempty"`
+	AuthInternalURL string `json:"auth_internal_url,omitempty"`
 
 	PublisherKafkaBroker           string `json:"publisher_kafka_broker,omitempty"`
 	PublisherKafkaEnabled          bool   `json:"publisher_kafka_enabled,omitempty"`
@@ -182,6 +186,22 @@ func parseAuditCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, e
 					return nil, h.Errf("failed to parse auto_provision: %v", err)
 				}
 				a.AutoProvision = v
+			case "auth_issuer":
+				if !h.AllArgs(&a.AuthIssuer) {
+					return nil, h.Errf("expected one string value for auth_issuer")
+				}
+			case "auth_internal_url":
+				if !h.AllArgs(&a.AuthInternalURL) {
+					return nil, h.Errf("expected one string value for auth_internal_url")
+				}
+			case "organization_id":
+				if !h.AllArgs(&a.OrganizationID) {
+					return nil, h.Errf("expected one string value for organization_id")
+				}
+			case "stack_id":
+				if !h.AllArgs(&a.StackID) {
+					return nil, h.Errf("expected one string value for stack_id")
+				}
 			default:
 				return nil, h.Errf("unrecognized option: %s", key)
 			}
@@ -189,10 +209,7 @@ func parseAuditCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, e
 	}
 
 	if a.TopicName == "" {
-		if os.Getenv("STACK") == "" {
-			return nil, fmt.Errorf("STACK environment variable is not set and topic_name parameter is not defined")
-		}
-		a.TopicName = os.Getenv("STACK") + "-audit"
+		return nil, fmt.Errorf("topic_name parameter is required")
 	}
 
 	fmt.Println("Initialize with topic name: " + a.TopicName)
@@ -392,6 +409,10 @@ func (a Audit) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.
 				r.Context(),
 				r,
 				a.logger,
+				a.AuthIssuer,
+				a.AuthInternalURL,
+				a.OrganizationID,
+				a.StackID,
 				request,
 				response,
 			),
