@@ -56,6 +56,7 @@ type Audit struct {
 	PublisherNatsClientId          string        `json:"publisher_nats_client_id,omitempty"`
 	PublisherNatsMaxReconnects     int           `json:"publisher_nats_max_reconnects,omitempty"`
 	PublisherNatsMaxReconnectsWait time.Duration `json:"publisher_nats_max_reconnects_wait,omitempty"`
+	AutoProvision                  bool
 }
 
 // Implements the caddy.Module interface.
@@ -68,6 +69,9 @@ func (Audit) CaddyModule() caddy.ModuleInfo {
 
 func parseAuditCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error) {
 	a := new(Audit)
+	// default value to keep compatibility
+	a.AutoProvision = true
+
 	for h.Next() {
 		for h.NextBlock(0) {
 			key := h.Val()
@@ -168,6 +172,16 @@ func parseAuditCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, e
 					return nil, h.Errf("expected one string value")
 				}
 				a.TopicName = topicName
+			case "auto_provision":
+				var autoProvision string
+				if !h.AllArgs(&autoProvision) {
+					return nil, h.Errf("expected one boolean value")
+				}
+				v, err := strconv.ParseBool(autoProvision)
+				if err != nil {
+					return nil, h.Errf("failed to parse auto_provision: %v", err)
+				}
+				a.AutoProvision = v
 			default:
 				return nil, h.Errf("unrecognized option: %s", key)
 			}
@@ -180,6 +194,8 @@ func parseAuditCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, e
 		}
 		a.TopicName = os.Getenv("STACK") + "-audit"
 	}
+
+	fmt.Println("Initialize with topic name: " + a.TopicName)
 
 	return a, nil
 }
@@ -225,7 +241,7 @@ func newNatsPublisherWithConn(conn *nats.Conn, logger watermill.LoggerAdapter, c
 func (a *Audit) provisionNatsPublisher() error {
 
 	jetStreamConfig := wNats.JetStreamConfig{
-		AutoProvision: true,
+		AutoProvision: a.AutoProvision,
 		DurablePrefix: "gateway",
 	}
 
