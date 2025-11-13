@@ -2,11 +2,19 @@ package plugins
 
 import (
 	"bytes"
+	"context"
 	"fmt"
+	"github.com/formancehq/go-libs/v3/auth"
+	"github.com/formancehq/go-libs/v3/oidc"
+	"github.com/formancehq/go-libs/v3/oidc/client"
+	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/trace"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,9 +33,14 @@ import (
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/formancehq/go-libs/v3/logging"
 	"github.com/formancehq/go-libs/v3/publish"
-	"github.com/formancehq/stack/components/gateway/internal/audit/messages"
 
 	"go.uber.org/zap"
+)
+
+const (
+	EventVersion   = "v2"
+	EventApp       = "gateway"
+	EventTypeAudit = "AUDIT"
 )
 
 func init() {
@@ -39,12 +52,15 @@ type Audit struct {
 	logger    *zap.Logger       `json:"-"`
 	bufPool   *sync.Pool        `json:"-"`
 	publisher message.Publisher `json:"-"`
+	keySet    oidc.KeySet       `json:"-"`
 
-	TopicName       string `json:"topic_name,omitempty"`
-	OrganizationID  string `json:"organization_id,omitempty"`
-	StackID         string `json:"stack_id,omitempty"`
-	AuthIssuer      string `json:"auth_issuer,omitempty"`
-	AuthInternalURL string `json:"auth_internal_url,omitempty"`
+	TopicName      string `json:"topic_name,omitempty"`
+	OrganizationID string `json:"organization_id,omitempty"`
+	StackID        string `json:"stack_id,omitempty"`
+	AuthEnabled    bool   `json:"auth_enabled,omitempty"`
+	AuthURL        string `json:"auth_url,omitempty"`
+	AuthIssuer     string `json:"auth_issuer,omitempty"`
+	AutoProvision  bool   `json:"auto_provision,omitempty"`
 
 	PublisherKafkaBroker           string `json:"publisher_kafka_broker,omitempty"`
 	PublisherKafkaEnabled          bool   `json:"publisher_kafka_enabled,omitempty"`
@@ -60,7 +76,6 @@ type Audit struct {
 	PublisherNatsClientId          string        `json:"publisher_nats_client_id,omitempty"`
 	PublisherNatsMaxReconnects     int           `json:"publisher_nats_max_reconnects,omitempty"`
 	PublisherNatsMaxReconnectsWait time.Duration `json:"publisher_nats_max_reconnects_wait,omitempty"`
-	AutoProvision                  bool
 }
 
 // Implements the caddy.Module interface.
@@ -186,13 +201,19 @@ func parseAuditCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, e
 					return nil, h.Errf("failed to parse auto_provision: %v", err)
 				}
 				a.AutoProvision = v
+			case "auth_url":
+				if !h.AllArgs(&a.AuthURL) {
+					return nil, h.Errf("expected one string value for auth_internal_url")
+				}
 			case "auth_issuer":
 				if !h.AllArgs(&a.AuthIssuer) {
-					return nil, h.Errf("expected one string value for auth_issuer")
+					return nil, h.Errf("expected one string value for expected_issuer")
 				}
-			case "auth_internal_url":
-				if !h.AllArgs(&a.AuthInternalURL) {
-					return nil, h.Errf("expected one string value for auth_internal_url")
+			case "auth_enabled":
+				var err error
+				a.AuthEnabled, err = parseBool(h.Dispenser)
+				if err != nil {
+					return nil, h.Errf("failed to parse auth_enabled: %v", err)
 				}
 			case "organization_id":
 				if !h.AllArgs(&a.OrganizationID) {
@@ -211,8 +232,9 @@ func parseAuditCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, e
 	if a.TopicName == "" {
 		return nil, fmt.Errorf("topic_name parameter is required")
 	}
-
-	fmt.Println("Initialize with topic name: " + a.TopicName)
+	if a.AuthEnabled && a.AuthURL == "" {
+		return nil, fmt.Errorf("auth_url parameter is required when auth_enabled is true")
+	}
 
 	return a, nil
 }
@@ -241,11 +263,26 @@ func (a *Audit) Provision(ctx caddy.Context) error {
 	}
 
 	if a.PublisherKafkaEnabled {
-		return a.provisionKafkaPublisher()
+		if err := a.provisionKafkaPublisher(); err != nil {
+			return err
+		}
 	}
 
 	if a.PublisherNatsEnabled {
-		return a.provisionNatsPublisher()
+		if err := a.provisionNatsPublisher(); err != nil {
+			return err
+		}
+	}
+
+	if a.AuthEnabled {
+		httpClient := http.DefaultClient
+		discovery, err := client.Discover[oidc.DiscoveryConfiguration](ctx, a.AuthURL, httpClient)
+		if err != nil {
+			a.logger.Error("failed to discover oidc configuration", zap.Error(err))
+			return err
+		}
+
+		a.keySet = client.NewRemoteKeySet(httpClient, discovery.JwksURI)
 	}
 
 	return nil
@@ -364,13 +401,6 @@ func (a *Audit) provisionKafkaPublisher() error {
 }
 
 func (a Audit) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
-	request := messages.HttpRequest{
-		Method: r.Method,
-		Path:   r.URL.Path,
-		Host:   r.Host,
-		Header: r.Header,
-		Body:   "",
-	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -380,7 +410,6 @@ func (a Audit) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.
 	}
 
 	if len(body) > 0 {
-		request.Body = string(body)
 		_ = r.Body.Close()
 		// Restore the io.ReadCloser to its original state
 		r.Body = io.NopCloser(bytes.NewBuffer(body))
@@ -391,31 +420,90 @@ func (a Audit) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.
 	defer a.bufPool.Put(buf)
 
 	rww := NewResponseWriterWrapper(w, buf)
-	if err := next.ServeHTTP(rww, r); err != nil {
+	if err := next.ServeHTTP(rww, r.Clone(r.Context())); err != nil {
 		return err
 	}
 
-	response := messages.NewHttpResponse(
+	response := NewHttpResponse(
 		*rww.statusCode,
 		rww.Header(),
 		rww.body.String(),
 	)
 
+	// Extract trace ID from OpenTelemetry context
+	traceID := extractTraceID(r.Context())
+
+	// Extract IP address from request
+	ipAddress := extractIPAddress(r)
+
+	// Remove response body for sensitive endpoints
+	if r.URL.Path == "/api/auth/oauth/token" {
+		response.Body = ""
+	}
+
+	var (
+		claims               *oidc.AccessTokenClaims
+		tokenValidationError error
+	)
+
+	if a.AuthEnabled {
+		issuer := a.AuthIssuer
+		if issuer == "" {
+			issuer = a.AuthURL
+		}
+		claims, tokenValidationError = auth.ClaimsFromRequest(r, issuer, a.keySet)
+	}
+
+	requestHeaders := r.Header.Clone()
+	// Remove Authorization header from request headers
+	requestHeaders.Del("Authorization")
+
+	payload := Payload{
+		ID:      uuid.New().String(),
+		TraceID: traceID,
+		Actor: Actor{
+			Claims: claims,
+			TokenValidationError: func() string {
+				if tokenValidationError != nil {
+					if errors.Is(tokenValidationError, auth.ErrNoAuthorizationHeader) {
+						return ""
+					}
+					return tokenValidationError.Error()
+				}
+				return ""
+			}(),
+			OrganizationID: a.OrganizationID,
+			StackID:        a.StackID,
+			IPAddress:      ipAddress,
+		},
+		HTTP: HTTP{
+			Request: HttpRequest{
+				Method: r.Method,
+				Path:   r.URL.Path,
+				Host:   r.Host,
+				Header: requestHeaders,
+				Body: func() string {
+					if len(body) > 0 {
+						return string(body)
+					}
+					return ""
+				}(),
+			},
+			Response: response,
+		},
+	}
+
 	if err := a.publisher.Publish(
 		a.TopicName,
 		publish.NewMessage(
 			r.Context(),
-			messages.NewAuditMessagePayload(
-				r.Context(),
-				r,
-				a.logger,
-				a.AuthIssuer,
-				a.AuthInternalURL,
-				a.OrganizationID,
-				a.StackID,
-				request,
-				response,
-			),
+			publish.EventMessage{
+				Date:    time.Now().UTC(),
+				App:     EventApp,
+				Version: EventVersion,
+				Type:    EventTypeAudit,
+				Payload: payload,
+			},
 		),
 	); err != nil {
 		a.logger.Error(fmt.Errorf("failed to publish audit message: %v", err).Error())
@@ -467,4 +555,81 @@ func (rww ResponseWriterWrapper) Header() http.Header {
 func (rww ResponseWriterWrapper) WriteHeader(statusCode int) {
 	(*rww.statusCode) = statusCode
 	rww.ResponseWriter.WriteHeader(statusCode)
+}
+
+type HttpRequest struct {
+	Method string      `json:"method"`
+	Path   string      `json:"path"`
+	Host   string      `json:"host"`
+	Header http.Header `json:"header"`
+	Body   string      `json:"body,omitempty"`
+}
+
+type HttpResponse struct {
+	StatusCode int         `json:"status_code"`
+	Headers    http.Header `json:"headers"`
+	Body       string      `json:"body,omitempty"`
+}
+
+func NewHttpResponse(
+	statusCode int,
+	headers http.Header,
+	body string,
+) HttpResponse {
+	return HttpResponse{
+		StatusCode: statusCode,
+		Headers:    headers,
+		Body:       body,
+	}
+}
+
+type Actor struct {
+	Claims               *oidc.AccessTokenClaims `json:"claims,omitempty"`
+	TokenValidationError string                  `json:"token_validation_error,omitempty"`
+	OrganizationID       string                  `json:"organization_id"`
+	StackID              string                  `json:"stack_id"`
+	IPAddress            string                  `json:"ip_address"`
+}
+
+type HTTP struct {
+	Request  HttpRequest  `json:"request"`
+	Response HttpResponse `json:"response"`
+}
+
+type Payload struct {
+	ID      string `json:"id"`
+	TraceID string `json:"trace_id"`
+	Actor   Actor  `json:"actor"`
+	HTTP    HTTP   `json:"http"`
+}
+
+// extractIPAddress extracts the client IP address from HTTP request
+// Priority: X-Forwarded-For > X-Real-IP > RemoteAddr
+func extractIPAddress(r *http.Request) string {
+	// Try X-Forwarded-For first
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		ips := strings.Split(xff, ",")
+		return strings.TrimSpace(ips[0])
+	}
+
+	// Try X-Real-IP
+	if xri := r.Header.Get("X-Real-IP"); xri != "" {
+		return xri
+	}
+
+	// Fallback to RemoteAddr (remove port)
+	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+	if ip != "" {
+		return ip
+	}
+	return r.RemoteAddr
+}
+
+// extractTraceID extracts the OpenTelemetry trace ID from context
+func extractTraceID(ctx context.Context) string {
+	span := trace.SpanFromContext(ctx)
+	if span.SpanContext().IsValid() {
+		return span.SpanContext().TraceID().String()
+	}
+	return ""
 }

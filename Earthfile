@@ -8,7 +8,6 @@ FROM core+base-image
 sources:
     WORKDIR /src
     COPY go.* .
-    COPY --dir internal .
     COPY --dir pkg .
     COPY main.go Caddyfile .
     SAVE ARTIFACT /src
