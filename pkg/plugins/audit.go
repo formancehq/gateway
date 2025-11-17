@@ -4,11 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/formancehq/go-libs/v3/auth"
-	"github.com/formancehq/go-libs/v3/oidc"
-	"github.com/formancehq/go-libs/v3/oidc/client"
-	"github.com/google/uuid"
-	"go.opentelemetry.io/otel/trace"
 	"io"
 	"net"
 	"net/http"
@@ -17,6 +12,12 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/formancehq/go-libs/v3/auth"
+	"github.com/formancehq/go-libs/v3/oidc"
+	"github.com/formancehq/go-libs/v3/oidc/client"
+	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/IBM/sarama"
 	"github.com/ThreeDotsLabs/watermill"
@@ -525,6 +526,7 @@ var (
 // the response body and status code to be used in the audit log.
 type ResponseWriterWrapper struct {
 	http.ResponseWriter
+	header     http.Header
 	body       *bytes.Buffer
 	statusCode *int
 }
@@ -536,24 +538,31 @@ func NewResponseWriterWrapper(w http.ResponseWriter, buf *bytes.Buffer) Response
 	return ResponseWriterWrapper{
 		ResponseWriter: w,
 		body:           buf,
+		header:         http.Header{},
 		statusCode:     &statusCode, // Default status code
 	}
 }
 
 func (rww ResponseWriterWrapper) Write(buf []byte) (int, error) {
-	rww.body.Write(buf)
+	if rww.header.Get("Content-Type") != "application/octet-stream" {
+		rww.body.Write(buf)
+	}
 	return rww.ResponseWriter.Write(buf)
 }
 
 // Header function overwrites the http.ResponseWriter Header() function
 func (rww ResponseWriterWrapper) Header() http.Header {
-	return rww.ResponseWriter.Header()
-
+	return rww.header
 }
 
 // WriteHeader function overwrites the http.ResponseWriter WriteHeader() function
 func (rww ResponseWriterWrapper) WriteHeader(statusCode int) {
-	(*rww.statusCode) = statusCode
+	*rww.statusCode = statusCode
+	for k, values := range rww.header {
+		for _, value := range values {
+			rww.ResponseWriter.Header().Add(k, value)
+		}
+	}
 	rww.ResponseWriter.WriteHeader(statusCode)
 }
 
