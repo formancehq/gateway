@@ -403,17 +403,24 @@ func (a *Audit) provisionKafkaPublisher() error {
 
 func (a Audit) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
 
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		if !errors.Is(err, io.EOF) {
-			return err
+	var (
+		body []byte
+		err  error
+	)
+	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/vnd.formance") ||
+		!strings.HasSuffix(r.Header.Get("Content-Type"), "-stream") {
+		body, err = io.ReadAll(r.Body)
+		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				return err
+			}
 		}
-	}
 
-	if len(body) > 0 {
-		_ = r.Body.Close()
-		// Restore the io.ReadCloser to its original state
-		r.Body = io.NopCloser(bytes.NewBuffer(body))
+		if len(body) > 0 {
+			_ = r.Body.Close()
+			// Restore the io.ReadCloser to its original state
+			r.Body = io.NopCloser(bytes.NewBuffer(body))
+		}
 	}
 
 	buf := a.bufPool.Get().(*bytes.Buffer)
