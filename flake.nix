@@ -1,8 +1,8 @@
 {
-  description = "A Nix-flake-based Go 1.25 development environment";
+  description = "A Nix-flake-based Go 1.26 development environment";
 
   inputs = {
-    nixpkgs.url = "https://flakehub.com/f/NixOS/nixpkgs/0.2505";
+    nixpkgs.url = "https://flakehub.com/f/NixOS/nixpkgs/0.2511";
     nixpkgs-unstable.url = "https://flakehub.com/f/NixOS/nixpkgs/0.1";
 
     nur = {
@@ -13,50 +13,52 @@
 
   outputs = { self, nixpkgs, nixpkgs-unstable, nur }:
     let
-      goVersion = 25;
-
       supportedSystems = [
         "x86_64-linux"
         "aarch64-linux"
         "x86_64-darwin"
         "aarch64-darwin"
       ];
+
       forEachSupportedSystem = f:
         nixpkgs.lib.genAttrs supportedSystems (system:
           let
             pkgs = import nixpkgs {
               inherit system;
-              overlays = [ self.overlays.default nur.overlays.default ];
-              config.allowUnfree = true;
+              overlays = [ nur.overlays.default ];
+              config.allowUnfreePredicate = pkg: builtins.elem (nixpkgs.lib.getName pkg) [
+                "goreleaser-pro"
+              ];
             };
             pkgs-unstable = import nixpkgs-unstable {
               inherit system;
-              overlays = [ self.overlays.default nur.overlays.default ];
-              config.allowUnfree = true;
             };
           in
           f { pkgs = pkgs; pkgs-unstable = pkgs-unstable; system = system; }
         );
     in
     {
-      overlays.default = final: prev: {
-        go = final."go_1_${toString goVersion}";
-      };
-
       devShells = forEachSupportedSystem ({ pkgs, pkgs-unstable, system }:
+        let
+          stablePackages = with pkgs; [
+            ginkgo
+            go_1_26
+            gomarkdoc
+            goperf
+            gotools
+            just
+            mockgen
+          ];
+          unstablePackages = with pkgs-unstable; [
+            golangci-lint
+          ];
+          otherPackages = [
+            pkgs.nur.repos.goreleaser.goreleaser-pro
+          ];
+        in
         {
           default = pkgs.mkShell {
-            packages = with pkgs; with pkgs-unstable; [
-              pkgs.ginkgo
-              pkgs.go
-              pkgs.gomarkdoc
-              pkgs.goperf
-              pkgs.gotools
-              pkgs.just
-              pkgs.mockgen
-              pkgs-unstable.golangci-lint
-              pkgs.nur.repos.goreleaser.goreleaser-pro
-            ];
+            packages = stablePackages ++ unstablePackages ++ otherPackages;
           };
         }
       );
