@@ -459,7 +459,9 @@ func (a Audit) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.
 		if issuer == "" {
 			issuer = a.AuthURL
 		}
-		claims, tokenValidationError = auth.ClaimsFromRequest(r, issuer, a.keySet)
+		claims, tokenValidationError = auth.ClaimsFromRequest(r, map[string]oidc.KeySet{
+			issuer: a.keySet,
+		})
 	}
 
 	requestHeaders := r.Header.Clone()
