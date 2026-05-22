@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/IBM/sarama"
@@ -37,6 +38,8 @@ func init() {
 type Audit struct {
 	logger     *zap.Logger                      `json:"-"`
 	publisher  message.Publisher                `json:"-"`
+	natsConn   *nats.Conn                       `json:"-"`
+	closing    atomic.Bool                      `json:"-"`
 	middleware func(http.Handler) http.Handler  `json:"-"`
 
 	TopicName      string `json:"topic_name,omitempty"`
@@ -273,10 +276,22 @@ func (a Audit) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.
 	return handlerErr
 }
 
+func (a *Audit) Cleanup() error {
+	a.closing.Store(true)
+	if a.publisher != nil {
+		_ = a.publisher.Close()
+	}
+	if a.natsConn != nil {
+		a.natsConn.Close()
+	}
+	return nil
+}
+
 // Interface Guards
 var (
 	_ caddy.Provisioner           = (*Audit)(nil)
 	_ caddy.Module                = (*Audit)(nil)
+	_ caddy.CleanerUpper          = (*Audit)(nil)
 	_ caddyhttp.MiddlewareHandler = (*Audit)(nil)
 )
 
@@ -296,6 +311,9 @@ func (a *Audit) provisionNatsPublisher() error {
 		nats.ReconnectWait(a.PublisherNatsMaxReconnectsWait),
 		nats.ClosedHandler(func(c *nats.Conn) {
 			a.logger.Info("nats connection closed")
+			if a.closing.Load() {
+				return
+			}
 			err := caddy.Stop()
 			if err != nil {
 				a.logger.Error("failed to stop caddy", zap.Error(err))
@@ -313,14 +331,15 @@ func (a *Audit) provisionNatsPublisher() error {
 		SubjectCalculator: wNats.DefaultSubjectCalculator,
 	}
 
-	conn, err := publish.NewNatsConn(publisherConfig)
+	var err error
+	a.natsConn, err = publish.NewNatsConn(publisherConfig)
 	if err != nil {
 		a.logger.Error("failed to create nats connection", zap.Error(err))
 		return err
 	}
 
 	a.publisher, err = newNatsPublisherWithConn(
-		conn,
+		a.natsConn,
 		logging.NewZapLoggerAdapter(a.logger),
 		publisherConfig,
 	)
