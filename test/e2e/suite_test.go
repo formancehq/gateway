@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -78,25 +79,33 @@ func freePort() int {
 // backendRecorder holds the mock backend server and the last request it received.
 type backendRecorder struct {
 	Server      *httptest.Server
-	LastRequest func() *http.Request
+	mu          sync.Mutex
+	lastReq     *http.Request
+}
+
+func (b *backendRecorder) LastRequest() *http.Request {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.lastReq
+}
+
+func (b *backendRecorder) recordRequest(r *http.Request) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.lastReq = r.Clone(r.Context())
 }
 
 // startBackend creates a mock HTTP backend that records incoming requests.
 func startBackend() *backendRecorder {
-	var lastReq *http.Request
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		lastReq = r.Clone(r.Context())
+	rec := &backendRecorder{}
+	rec.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rec.recordRequest(r)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	}))
-	DeferCleanup(srv.Close)
-	return &backendRecorder{
-		Server: srv,
-		LastRequest: func() *http.Request {
-			return lastReq
-		},
-	}
+	DeferCleanup(rec.Server.Close)
+	return rec
 }
 
 // startGateway starts a Caddy server with the audit plugin configured to

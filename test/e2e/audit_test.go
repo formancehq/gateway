@@ -17,10 +17,7 @@ import (
 )
 
 var _ = Describe("Audit", func() {
-	var (
-		natsURL   = deferred.Map(natsServer, (*natstesting.NatsServer).ClientURL)
-		topicName = "audit-e2e"
-	)
+	var topicName = "audit-e2e"
 
 	Context("basic audit flow", Ordered, func() {
 		var (
@@ -30,6 +27,7 @@ var _ = Describe("Audit", func() {
 		)
 
 		BeforeAll(func(specContext SpecContext) {
+			natsURL := deferred.Map(natsServer, (*natstesting.NatsServer).ClientURL)
 			url, err := natsURL.Wait(specContext)
 			Expect(err).To(BeNil())
 
