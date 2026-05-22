@@ -39,7 +39,7 @@ type Audit struct {
 	logger     *zap.Logger                      `json:"-"`
 	publisher  message.Publisher                `json:"-"`
 	natsConn   *nats.Conn                       `json:"-"`
-	closing    atomic.Bool                      `json:"-"`
+	closing    *atomic.Bool                     `json:"-"`
 	middleware func(http.Handler) http.Handler  `json:"-"`
 
 	TopicName      string `json:"topic_name,omitempty"`
@@ -225,6 +225,7 @@ func parseBool(d *caddyfile.Dispenser) (bool, error) {
 
 func (a *Audit) Provision(ctx caddy.Context) error {
 	a.logger = ctx.Logger(a)
+	a.closing = &atomic.Bool{}
 
 	if a.PublisherKafkaEnabled {
 		if err := a.provisionKafkaPublisher(); err != nil {

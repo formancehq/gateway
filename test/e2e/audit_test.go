@@ -49,7 +49,7 @@ var _ = Describe("Audit", func() {
 
 				resp, err = http.DefaultClient.Do(req)
 				Expect(err).To(BeNil())
-				defer resp.Body.Close()
+				defer func() { _ = resp.Body.Close() }()
 			})
 
 			It("should return a successful response", func() {
@@ -79,7 +79,7 @@ var _ = Describe("Audit", func() {
 
 				resp, err := http.DefaultClient.Do(req)
 				Expect(err).To(BeNil())
-				resp.Body.Close()
+				_ = resp.Body.Close()
 
 				Eventually(messages).Should(Receive(Satisfy(func(msg *nats.Msg) bool {
 					payload := parseAuditPayload(msg)
@@ -107,7 +107,7 @@ var _ = Describe("Audit", func() {
 
 				resp, err := http.DefaultClient.Do(req)
 				Expect(err).To(BeNil())
-				resp.Body.Close()
+				_ = resp.Body.Close()
 
 				Expect(resp.StatusCode).To(Equal(http.StatusOK))
 
@@ -122,7 +122,7 @@ var _ = Describe("Audit", func() {
 
 				resp, err := http.DefaultClient.Do(req)
 				Expect(err).To(BeNil())
-				resp.Body.Close()
+				_ = resp.Body.Close()
 
 				Eventually(messages).Should(Receive(Satisfy(func(msg *nats.Msg) bool {
 					payload := parseAuditPayload(msg)
