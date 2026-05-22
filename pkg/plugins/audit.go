@@ -23,9 +23,10 @@ import (
 	"github.com/xdg-go/scram"
 	"go.uber.org/zap"
 
+	"github.com/formancehq/go-libs/v5/pkg/audit"
+	"github.com/formancehq/go-libs/v5/pkg/audit/httpaudit"
 	v5oidc "github.com/formancehq/go-libs/v5/pkg/authn/oidc"
 	v5client "github.com/formancehq/go-libs/v5/pkg/authn/oidc/client"
-	"github.com/formancehq/go-libs/v5/pkg/transport/httpserver/audit"
 )
 
 const EventApp = "gateway"
@@ -242,7 +243,6 @@ func (a *Audit) Provision(ctx caddy.Context) error {
 	opts := []audit.Option{
 		audit.WithOrganizationID(a.OrganizationID),
 		audit.WithStackID(a.StackID),
-		audit.WithSensitivePaths("/api/auth/oauth/token"),
 	}
 
 	if a.AuthEnabled {
@@ -262,7 +262,9 @@ func (a *Audit) Provision(ctx caddy.Context) error {
 		opts = append(opts, audit.WithAuth(map[string]v5oidc.KeySet{issuer: keySet}))
 	}
 
-	a.middleware = audit.Middleware(a.publisher, a.TopicName, EventApp, opts...)
+	a.middleware = httpaudit.Middleware(a.publisher, a.TopicName, EventApp, opts,
+		httpaudit.WithSensitivePaths("/api/auth/oauth/token"),
+	)
 
 	return nil
 }
