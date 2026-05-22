@@ -1,32 +1,16 @@
 package plugins
 
 import (
-	"bytes"
-	"context"
 	"fmt"
-	"io"
-	"net"
 	"net/http"
 	"os"
 	"strconv"
-	"strings"
-	"sync"
 	"time"
-
-	"github.com/formancehq/go-libs/v3/auth"
-	"github.com/formancehq/go-libs/v3/oidc"
-	"github.com/formancehq/go-libs/v3/oidc/client"
-	"github.com/google/uuid"
-	"go.opentelemetry.io/otel/trace"
 
 	"github.com/IBM/sarama"
 	"github.com/ThreeDotsLabs/watermill"
 	"github.com/ThreeDotsLabs/watermill-kafka/v3/pkg/kafka"
 	wNats "github.com/ThreeDotsLabs/watermill-nats/v2/pkg/nats"
-	"github.com/nats-io/nats.go"
-	"github.com/pkg/errors"
-	"github.com/xdg-go/scram"
-
 	"github.com/ThreeDotsLabs/watermill/message"
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
@@ -34,15 +18,16 @@ import (
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/formancehq/go-libs/v3/logging"
 	"github.com/formancehq/go-libs/v3/publish"
-
+	"github.com/nats-io/nats.go"
+	"github.com/xdg-go/scram"
 	"go.uber.org/zap"
+
+	v5oidc "github.com/formancehq/go-libs/v5/pkg/authn/oidc"
+	v5client "github.com/formancehq/go-libs/v5/pkg/authn/oidc/client"
+	"github.com/formancehq/go-libs/v5/pkg/transport/httpserver/audit"
 )
 
-const (
-	EventVersion   = "v2"
-	EventApp       = "gateway"
-	EventTypeAudit = "AUDIT"
-)
+const EventApp = "gateway"
 
 func init() {
 	caddy.RegisterModule(Audit{})
@@ -50,10 +35,9 @@ func init() {
 }
 
 type Audit struct {
-	logger    *zap.Logger       `json:"-"`
-	bufPool   *sync.Pool        `json:"-"`
-	publisher message.Publisher `json:"-"`
-	keySet    oidc.KeySet       `json:"-"`
+	logger     *zap.Logger                      `json:"-"`
+	publisher  message.Publisher                `json:"-"`
+	middleware func(http.Handler) http.Handler  `json:"-"`
 
 	TopicName      string `json:"topic_name,omitempty"`
 	OrganizationID string `json:"organization_id,omitempty"`
@@ -79,7 +63,6 @@ type Audit struct {
 	PublisherNatsMaxReconnectsWait time.Duration `json:"publisher_nats_max_reconnects_wait,omitempty"`
 }
 
-// Implements the caddy.Module interface.
 func (Audit) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
 		ID:  "http.handlers.audit",
@@ -89,7 +72,6 @@ func (Audit) CaddyModule() caddy.ModuleInfo {
 
 func parseAuditCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error) {
 	a := new(Audit)
-	// default value to keep compatibility
 	a.AutoProvision = true
 
 	for h.Next() {
@@ -102,106 +84,92 @@ func parseAuditCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, e
 				if err != nil {
 					return nil, h.Errf("failed to parse publisher_kafka_enabled: %v", err)
 				}
-
 			case "publisher_kafka_broker":
 				if !h.AllArgs(&a.PublisherKafkaBroker) {
 					return nil, h.Errf("expected one string value for kafka_broker")
 				}
-
 			case "publisher_kafka_tls_enabled":
 				var err error
 				a.PublisherKafkaTLSEnabled, err = parseBool(h.Dispenser)
 				if err != nil {
 					return nil, h.Errf("failed to parse publisher_kafka_tls_enabled: %v", err)
 				}
-
 			case "publisher_kafka_sasl_enabled":
 				var err error
 				a.PublisherKafkaSASLEnabled, err = parseBool(h.Dispenser)
 				if err != nil {
 					return nil, h.Errf("failed to parse publisher_kafka_sasl_enabled: %v", err)
 				}
-
 			case "publisher_kafka_sasl_username":
 				if !h.AllArgs(&a.PublisherKafkaSASLUsername) {
 					return nil, h.Errf("expected one string value for publisher kafka sasl username")
 				}
-
 			case "publisher_kafka_sasl_password":
 				if !h.AllArgs(&a.PublisherKafkaSASLPassword) {
 					return nil, h.Errf("expected one string value for publisher kafka sasl password")
 				}
-
 			case "publisher_kafka_sasl_mechanism":
 				if !h.AllArgs(&a.PublisherKafkaSASLMechanism) {
 					return nil, h.Errf("expected one string value for publisher kafka sasl mechanism")
 				}
-
 			case "publisher_kafka_sasl_scram_sha_size":
-				var publisherKafkaSaslScramShaSize string
-				if !h.AllArgs(&publisherKafkaSaslScramShaSize) {
-					return nil, h.Errf("expected one boolean value")
+				var v string
+				if !h.AllArgs(&v) {
+					return nil, h.Errf("expected one integer value")
 				}
-
-				res, err := strconv.ParseInt(publisherKafkaSaslScramShaSize, 10, 32)
+				res, err := strconv.ParseInt(v, 10, 32)
 				if err != nil {
 					return nil, h.Errf("failed to parse publisher_kafka_sasl_scram_sha_size: %v", err)
 				}
 				a.PublisherKafkaSASLScramSHASize = int(res)
-
 			case "publisher_nats_enabled":
 				var err error
 				a.PublisherNatsEnabled, err = parseBool(h.Dispenser)
 				if err != nil {
 					return nil, h.Errf("failed to parse publisher_nats_enabled: %v", err)
 				}
-
 			case "publisher_nats_url":
 				if !h.AllArgs(&a.PublisherNatsURL) {
 					return nil, h.Errf("expected one string value for publisher_nats_url")
 				}
-
 			case "publisher_nats_client_id":
 				if !h.AllArgs(&a.PublisherNatsClientId) {
 					return nil, h.Errf("expected one string value for publisher_nats_client_id")
 				}
 			case "publisher_nats_max_reconnects":
-				var publisherNatsMaxReconnects string
-				if !h.AllArgs(&publisherNatsMaxReconnects) {
-					return nil, h.Errf("expected one boolean value")
+				var v string
+				if !h.AllArgs(&v) {
+					return nil, h.Errf("expected one integer value")
 				}
-
-				res, err := strconv.ParseInt(publisherNatsMaxReconnects, 10, 32)
+				res, err := strconv.ParseInt(v, 10, 32)
 				if err != nil {
 					return nil, h.Errf("failed to parse publisher_nats_max_reconnects: %v", err)
 				}
 				a.PublisherNatsMaxReconnects = int(res)
 			case "publisher_nats_max_reconnects_wait":
-				var publisherNatsMaxReconnectsWait string
-				if !h.AllArgs(&publisherNatsMaxReconnectsWait) {
-					return nil, h.Errf("expected one boolean value")
+				var v string
+				if !h.AllArgs(&v) {
+					return nil, h.Errf("expected one duration value")
 				}
-				res, err := time.ParseDuration(publisherNatsMaxReconnectsWait)
+				res, err := time.ParseDuration(v)
 				if err != nil {
 					return nil, h.Errf("failed to parse publisher_nats_max_reconnects_wait: %v", err)
 				}
 				a.PublisherNatsMaxReconnectsWait = res
 			case "topic_name":
-				var topicName string
-				if !h.AllArgs(&topicName) {
+				if !h.AllArgs(&a.TopicName) {
 					return nil, h.Errf("expected one string value")
 				}
-				a.TopicName = topicName
 			case "auto_provision":
-				var autoProvision string
-				if !h.AllArgs(&autoProvision) {
+				var v string
+				if !h.AllArgs(&v) {
 					return nil, h.Errf("expected one boolean value")
 				}
-				v, err := strconv.ParseBool(autoProvision)
+				b, err := strconv.ParseBool(v)
 				if err != nil {
 					return nil, h.Errf("failed to parse auto_provision: %v", err)
 				}
-				a.AutoProvision = v
+				a.AutoProvision = b
 			case "auth_url":
 				if !h.AllArgs(&a.AuthURL) {
 					return nil, h.Errf("expected one string value for auth_internal_url")
@@ -245,23 +213,15 @@ func parseBool(d *caddyfile.Dispenser) (bool, error) {
 	if !d.AllArgs(&b) {
 		return false, d.Errf("expected one boolean value")
 	}
-
 	res, err := strconv.ParseBool(b)
 	if err != nil {
 		return false, d.Errf("expected boolean value")
 	}
-
 	return res, nil
 }
 
-// Implements the caddy.Provisioner interface.
 func (a *Audit) Provision(ctx caddy.Context) error {
 	a.logger = ctx.Logger(a)
-	a.bufPool = &sync.Pool{
-		New: func() any {
-			return new(bytes.Buffer)
-		},
-	}
 
 	if a.PublisherKafkaEnabled {
 		if err := a.provisionKafkaPublisher(); err != nil {
@@ -275,26 +235,56 @@ func (a *Audit) Provision(ctx caddy.Context) error {
 		}
 	}
 
+	opts := []audit.Option{
+		audit.WithOrganizationID(a.OrganizationID),
+		audit.WithStackID(a.StackID),
+		audit.WithSensitivePaths("/api/auth/oauth/token"),
+	}
+
 	if a.AuthEnabled {
 		httpClient := http.DefaultClient
-		discovery, err := client.Discover[oidc.DiscoveryConfiguration](ctx, a.AuthURL, httpClient)
+		issuer := a.AuthIssuer
+		if issuer == "" {
+			issuer = a.AuthURL
+		}
+
+		discovery, err := v5client.Discover[v5oidc.DiscoveryConfiguration](ctx, a.AuthURL, httpClient)
 		if err != nil {
 			a.logger.Error("failed to discover oidc configuration", zap.Error(err))
 			return err
 		}
 
-		a.keySet = client.NewRemoteKeySet(httpClient, discovery.JwksURI)
+		keySet := v5client.NewRemoteKeySet(httpClient, discovery.JwksURI)
+		opts = append(opts, audit.WithAuth(map[string]v5oidc.KeySet{issuer: keySet}))
 	}
+
+	a.middleware = audit.Middleware(a.publisher, a.TopicName, EventApp, opts...)
 
 	return nil
 }
+
+func (a Audit) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
+	var handlerErr error
+
+	a.middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlerErr = next.ServeHTTP(w, r)
+	})).ServeHTTP(w, r)
+
+	return handlerErr
+}
+
+// Interface Guards
+var (
+	_ caddy.Provisioner           = (*Audit)(nil)
+	_ caddy.Module                = (*Audit)(nil)
+	_ caddyhttp.MiddlewareHandler = (*Audit)(nil)
+)
 
 func newNatsPublisherWithConn(conn *nats.Conn, logger watermill.LoggerAdapter, config wNats.PublisherConfig) (*wNats.Publisher, error) {
 	return wNats.NewPublisherWithNatsConn(conn, config.GetPublisherPublishConfig(), logger)
 }
 
 func (a *Audit) provisionNatsPublisher() error {
-
 	jetStreamConfig := wNats.JetStreamConfig{
 		AutoProvision: a.AutoProvision,
 		DurablePrefix: "gateway",
@@ -323,9 +313,7 @@ func (a *Audit) provisionNatsPublisher() error {
 		SubjectCalculator: wNats.DefaultSubjectCalculator,
 	}
 
-	conn, err := publish.NewNatsConn(
-		publisherConfig,
-	)
+	conn, err := publish.NewNatsConn(publisherConfig)
 	if err != nil {
 		a.logger.Error("failed to create nats connection", zap.Error(err))
 		return err
@@ -333,12 +321,9 @@ func (a *Audit) provisionNatsPublisher() error {
 
 	a.publisher, err = newNatsPublisherWithConn(
 		conn,
-		logging.NewZapLoggerAdapter(
-			a.logger,
-		),
+		logging.NewZapLoggerAdapter(a.logger),
 		publisherConfig,
 	)
-
 	if err != nil {
 		a.logger.Error("failed to create nats publisher", zap.Error(err))
 		return err
@@ -348,7 +333,6 @@ func (a *Audit) provisionNatsPublisher() error {
 }
 
 func (a *Audit) provisionKafkaPublisher() error {
-
 	options := []publish.SaramaOption{
 		publish.WithSASLCredentials(
 			a.PublisherKafkaSASLUsername,
@@ -382,270 +366,15 @@ func (a *Audit) provisionKafkaPublisher() error {
 
 	var err error
 	a.publisher, err = publish.NewKafkaPublisher(
-		logging.NewZapLoggerAdapter(
-			a.logger,
-		),
-		publish.NewSaramaConfig(
-			"gateway",
-			sarama.V1_0_0_0,
-			options...),
+		logging.NewZapLoggerAdapter(a.logger),
+		publish.NewSaramaConfig("gateway", sarama.V1_0_0_0, options...),
 		kafka.DefaultMarshaler{},
 		a.PublisherKafkaBroker,
 	)
-
 	if err != nil {
 		a.logger.Error("failed to create kafka publisher", zap.Error(err))
 		return err
 	}
 
 	return nil
-}
-
-func (a Audit) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
-
-	var (
-		body []byte
-		err  error
-	)
-	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/vnd.formance") ||
-		!strings.HasSuffix(r.Header.Get("Content-Type"), "-stream") {
-		body, err = io.ReadAll(r.Body)
-		if err != nil {
-			if !errors.Is(err, io.EOF) {
-				return err
-			}
-		}
-
-		if len(body) > 0 {
-			_ = r.Body.Close()
-			// Restore the io.ReadCloser to its original state
-			r.Body = io.NopCloser(bytes.NewBuffer(body))
-		}
-	}
-
-	buf := a.bufPool.Get().(*bytes.Buffer)
-	buf.Reset()
-	defer a.bufPool.Put(buf)
-
-	rww := NewResponseWriterWrapper(w, buf)
-	if err := next.ServeHTTP(rww, r.Clone(r.Context())); err != nil {
-		return err
-	}
-
-	response := NewHttpResponse(
-		*rww.statusCode,
-		rww.Header(),
-		rww.body.String(),
-	)
-
-	// Extract trace ID from OpenTelemetry context
-	traceID := extractTraceID(r.Context())
-
-	// Extract IP address from request
-	ipAddress := extractIPAddress(r)
-
-	// Remove response body for sensitive endpoints
-	if r.URL.Path == "/api/auth/oauth/token" {
-		response.Body = ""
-	}
-
-	var (
-		claims               *oidc.AccessTokenClaims
-		tokenValidationError error
-	)
-
-	if a.AuthEnabled {
-		issuer := a.AuthIssuer
-		if issuer == "" {
-			issuer = a.AuthURL
-		}
-		claims, tokenValidationError = auth.ClaimsFromRequest(r, map[string]oidc.KeySet{issuer: a.keySet})
-	}
-
-	requestHeaders := r.Header.Clone()
-	// Remove Authorization header from request headers
-	requestHeaders.Del("Authorization")
-
-	payload := Payload{
-		ID:      uuid.New().String(),
-		TraceID: traceID,
-		Actor: Actor{
-			Claims: claims,
-			TokenValidationError: func() string {
-				if tokenValidationError != nil {
-					if errors.Is(tokenValidationError, auth.ErrNoAuthorizationHeader) {
-						return ""
-					}
-					return tokenValidationError.Error()
-				}
-				return ""
-			}(),
-			OrganizationID: a.OrganizationID,
-			StackID:        a.StackID,
-			IPAddress:      ipAddress,
-		},
-		HTTP: HTTP{
-			Request: HttpRequest{
-				Method: r.Method,
-				Path:   r.URL.Path,
-				Host:   r.Host,
-				Header: requestHeaders,
-				Body: func() string {
-					if len(body) > 0 {
-						return string(body)
-					}
-					return ""
-				}(),
-			},
-			Response: response,
-		},
-	}
-
-	if err := a.publisher.Publish(
-		a.TopicName,
-		publish.NewMessage(
-			r.Context(),
-			publish.EventMessage{
-				Date:    time.Now().UTC(),
-				App:     EventApp,
-				Version: EventVersion,
-				Type:    EventTypeAudit,
-				Payload: payload,
-			},
-		),
-	); err != nil {
-		a.logger.Error(fmt.Errorf("failed to publish audit message: %v", err).Error())
-	}
-
-	return nil
-}
-
-// Interface Guards
-var (
-	_ caddy.Provisioner           = (*Audit)(nil)
-	_ caddy.Module                = (*Audit)(nil)
-	_ caddyhttp.MiddlewareHandler = (*Audit)(nil)
-)
-
-//------------------------------------------------------------------------------
-
-// ResponseWriterWrapper is a wrapper for the http.ResponseWriter, it captures
-// the response body and status code to be used in the audit log.
-type ResponseWriterWrapper struct {
-	http.ResponseWriter
-	header     http.Header
-	body       *bytes.Buffer
-	statusCode *int
-}
-
-// NewResponseWriterWrapper static function creates a wrapper for the
-// http.ResponseWriter
-func NewResponseWriterWrapper(w http.ResponseWriter, buf *bytes.Buffer) ResponseWriterWrapper {
-	statusCode := 200
-	return ResponseWriterWrapper{
-		ResponseWriter: w,
-		body:           buf,
-		header:         http.Header{},
-		statusCode:     &statusCode, // Default status code
-	}
-}
-
-func (rww ResponseWriterWrapper) Write(buf []byte) (int, error) {
-	if rww.header.Get("Content-Type") != "application/octet-stream" {
-		rww.body.Write(buf)
-	}
-	return rww.ResponseWriter.Write(buf)
-}
-
-// Header function overwrites the http.ResponseWriter Header() function
-func (rww ResponseWriterWrapper) Header() http.Header {
-	return rww.header
-}
-
-// WriteHeader function overwrites the http.ResponseWriter WriteHeader() function
-func (rww ResponseWriterWrapper) WriteHeader(statusCode int) {
-	*rww.statusCode = statusCode
-	for k, values := range rww.header {
-		for _, value := range values {
-			rww.ResponseWriter.Header().Add(k, value)
-		}
-	}
-	rww.ResponseWriter.WriteHeader(statusCode)
-}
-
-type HttpRequest struct {
-	Method string      `json:"method"`
-	Path   string      `json:"path"`
-	Host   string      `json:"host"`
-	Header http.Header `json:"header"`
-	Body   string      `json:"body,omitempty"`
-}
-
-type HttpResponse struct {
-	StatusCode int         `json:"status_code"`
-	Headers    http.Header `json:"headers"`
-	Body       string      `json:"body,omitempty"`
-}
-
-func NewHttpResponse(
-	statusCode int,
-	headers http.Header,
-	body string,
-) HttpResponse {
-	return HttpResponse{
-		StatusCode: statusCode,
-		Headers:    headers,
-		Body:       body,
-	}
-}
-
-type Actor struct {
-	Claims               *oidc.AccessTokenClaims `json:"claims,omitempty"`
-	TokenValidationError string                  `json:"token_validation_error,omitempty"`
-	OrganizationID       string                  `json:"organization_id"`
-	StackID              string                  `json:"stack_id"`
-	IPAddress            string                  `json:"ip_address"`
-}
-
-type HTTP struct {
-	Request  HttpRequest  `json:"request"`
-	Response HttpResponse `json:"response"`
-}
-
-type Payload struct {
-	ID      string `json:"id"`
-	TraceID string `json:"trace_id"`
-	Actor   Actor  `json:"actor"`
-	HTTP    HTTP   `json:"http"`
-}
-
-// extractIPAddress extracts the client IP address from HTTP request
-// Priority: X-Forwarded-For > X-Real-IP > RemoteAddr
-func extractIPAddress(r *http.Request) string {
-	// Try X-Forwarded-For first
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		ips := strings.Split(xff, ",")
-		return strings.TrimSpace(ips[0])
-	}
-
-	// Try X-Real-IP
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return xri
-	}
-
-	// Fallback to RemoteAddr (remove port)
-	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
-	if ip != "" {
-		return ip
-	}
-	return r.RemoteAddr
-}
-
-// extractTraceID extracts the OpenTelemetry trace ID from context
-func extractTraceID(ctx context.Context) string {
-	span := trace.SpanFromContext(ctx)
-	if span.SpanContext().IsValid() {
-		return span.SpanContext().TraceID().String()
-	}
-	return ""
 }
