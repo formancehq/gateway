@@ -155,7 +155,7 @@ func startGateway(natsURL, backendAddr, topicName string) string {
 		if err != nil {
 			return err
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return nil
 	}).WithTimeout(5 * time.Second).WithPolling(100 * time.Millisecond).Should(Succeed())
 
