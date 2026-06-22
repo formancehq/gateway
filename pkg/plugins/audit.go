@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/IBM/sarama"
-	"github.com/ThreeDotsLabs/watermill"
 	"github.com/ThreeDotsLabs/watermill-kafka/v3/pkg/kafka"
 	wNats "github.com/ThreeDotsLabs/watermill-nats/v2/pkg/nats"
 	"github.com/ThreeDotsLabs/watermill/message"
@@ -17,8 +16,6 @@ import (
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
-	"github.com/formancehq/go-libs/v3/logging"
-	"github.com/formancehq/go-libs/v3/publish"
 	"github.com/nats-io/nats.go"
 	"github.com/xdg-go/scram"
 	"go.uber.org/zap"
@@ -27,6 +24,8 @@ import (
 	"github.com/formancehq/go-libs/v5/pkg/audit/httpaudit"
 	v5oidc "github.com/formancehq/go-libs/v5/pkg/authn/oidc"
 	v5client "github.com/formancehq/go-libs/v5/pkg/authn/oidc/client"
+	"github.com/formancehq/go-libs/v5/pkg/messaging/publish"
+	logging "github.com/formancehq/go-libs/v5/pkg/observe/log"
 )
 
 const EventApp = "gateway"
@@ -37,11 +36,11 @@ func init() {
 }
 
 type Audit struct {
-	logger     *zap.Logger                      `json:"-"`
-	publisher  message.Publisher                `json:"-"`
-	natsConn   *nats.Conn                       `json:"-"`
-	closing    *atomic.Bool                     `json:"-"`
-	middleware func(http.Handler) http.Handler  `json:"-"`
+	logger     *zap.Logger                     `json:"-"`
+	publisher  message.Publisher               `json:"-"`
+	natsConn   *nats.Conn                      `json:"-"`
+	closing    *atomic.Bool                    `json:"-"`
+	middleware func(http.Handler) http.Handler `json:"-"`
 
 	TopicName      string `json:"topic_name,omitempty"`
 	OrganizationID string `json:"organization_id,omitempty"`
@@ -263,6 +262,7 @@ func (a *Audit) Provision(ctx caddy.Context) error {
 	}
 
 	a.middleware = httpaudit.Middleware(a.publisher, a.TopicName, EventApp, opts,
+		httpaudit.WithEnabled(true),
 		httpaudit.WithSensitivePaths("/api/auth/oauth/token"),
 	)
 
@@ -297,10 +297,6 @@ var (
 	_ caddy.CleanerUpper          = (*Audit)(nil)
 	_ caddyhttp.MiddlewareHandler = (*Audit)(nil)
 )
-
-func newNatsPublisherWithConn(conn *nats.Conn, logger watermill.LoggerAdapter, config wNats.PublisherConfig) (*wNats.Publisher, error) {
-	return wNats.NewPublisherWithNatsConn(conn, config.GetPublisherPublishConfig(), logger)
-}
 
 func (a *Audit) provisionNatsPublisher() error {
 	jetStreamConfig := wNats.JetStreamConfig{
@@ -341,7 +337,7 @@ func (a *Audit) provisionNatsPublisher() error {
 		return err
 	}
 
-	a.publisher, err = newNatsPublisherWithConn(
+	a.publisher, err = publish.NewNatsPublisherWithConn(
 		a.natsConn,
 		logging.NewZapLoggerAdapter(a.logger),
 		publisherConfig,
