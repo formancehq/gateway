@@ -1,10 +1,13 @@
 package plugins
 
 import (
+	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -251,13 +254,18 @@ func (a *Audit) Provision(ctx caddy.Context) error {
 			issuer = a.AuthURL
 		}
 
-		discovery, err := v5client.Discover[v5oidc.DiscoveryConfiguration](ctx, a.AuthURL, httpClient)
+		discovery, err := discoverAuthConfiguration(ctx, a.AuthURL, issuer, httpClient)
 		if err != nil {
 			a.logger.Error("failed to discover oidc configuration", zap.Error(err))
 			return err
 		}
 
-		keySet := v5client.NewRemoteKeySet(httpClient, discovery.JwksURI)
+		jwksURL, err := internalAuthEndpointURL(discovery.JwksURI, issuer, a.AuthURL)
+		if err != nil {
+			return err
+		}
+
+		keySet := v5client.NewRemoteKeySet(httpClient, jwksURL)
 		opts = append(opts, audit.WithAuth(map[string]v5oidc.KeySet{issuer: keySet}))
 	}
 
@@ -267,6 +275,54 @@ func (a *Audit) Provision(ctx caddy.Context) error {
 	)
 
 	return nil
+}
+
+func discoverAuthConfiguration(
+	ctx context.Context,
+	authURL string,
+	issuer string,
+	httpClient *http.Client,
+) (*v5oidc.DiscoveryConfiguration, error) {
+	wellKnownURL := v5oidc.NormalizeIssuer(authURL) + v5oidc.DiscoveryEndpoint
+	return v5client.Discover[v5oidc.DiscoveryConfiguration](ctx, issuer, httpClient, wellKnownURL)
+}
+
+func internalAuthEndpointURL(endpoint string, issuer string, authURL string) (string, error) {
+	endpointURL, err := url.Parse(endpoint)
+	if err != nil {
+		return "", fmt.Errorf("parse discovered auth endpoint url: %w", err)
+	}
+
+	issuerURL, err := url.Parse(v5oidc.NormalizeIssuer(issuer))
+	if err != nil {
+		return "", fmt.Errorf("parse auth issuer url: %w", err)
+	}
+
+	authBaseURL, err := url.Parse(v5oidc.NormalizeIssuer(authURL))
+	if err != nil {
+		return "", fmt.Errorf("parse auth url: %w", err)
+	}
+
+	if endpointURL.Scheme != issuerURL.Scheme ||
+		endpointURL.Host != issuerURL.Host ||
+		!sameOrChildPath(endpointURL.Path, issuerURL.Path) {
+		return endpoint, nil
+	}
+
+	suffix := strings.TrimPrefix(endpointURL.Path, strings.TrimRight(issuerURL.Path, "/"))
+	authBaseURL.Path = strings.TrimRight(authBaseURL.Path, "/") + suffix
+	authBaseURL.RawQuery = endpointURL.RawQuery
+	authBaseURL.Fragment = endpointURL.Fragment
+
+	return authBaseURL.String(), nil
+}
+
+func sameOrChildPath(path string, basePath string) bool {
+	basePath = strings.TrimRight(basePath, "/")
+	if basePath == "" {
+		return strings.HasPrefix(path, "/")
+	}
+	return path == basePath || strings.HasPrefix(path, basePath+"/")
 }
 
 func (a Audit) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
