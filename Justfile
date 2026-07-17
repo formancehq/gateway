@@ -36,7 +36,12 @@ deploy-staging TAG='' COMPONENT='gateway':
   #!/usr/bin/env bash
   set -euo pipefail
 
-  if [ -z "{{TAG}}" ]; then
+  # quote() shell-escapes the interpolated values so a crafted TAG/COMPONENT
+  # (e.g. a malicious branch name) cannot inject shell commands.
+  TAG={{quote(TAG)}}
+  COMPONENT={{quote(COMPONENT)}}
+
+  if [ -z "$TAG" ]; then
     echo "Error: TAG is required"
     exit 1
   fi
@@ -46,14 +51,17 @@ deploy-staging TAG='' COMPONENT='gateway':
     exit 1
   fi
 
+  # Pass the token via the environment so it never appears in the process
+  # arguments (argocd reads ARGOCD_AUTH_TOKEN natively).
+  export ARGOCD_AUTH_TOKEN="$AUTH_TOKEN"
   APPLICATION="staging-eu-west-1-hosting-regions"
   SERVER="argocd.internal.formance.cloud"
 
-  echo "Updating {{COMPONENT}} tag to {{TAG}} on $APPLICATION..."
-  argocd --auth-token="$AUTH_TOKEN" --server="$SERVER" --grpc-web app set "$APPLICATION" \
-    --parameter versions.files.default.{{COMPONENT}}="{{TAG}}"
+  echo "Updating $COMPONENT tag to $TAG on $APPLICATION..."
+  argocd --server="$SERVER" --grpc-web app set "$APPLICATION" \
+    --parameter "versions.files.default.$COMPONENT=$TAG"
 
   echo "Syncing application $APPLICATION..."
-  argocd --auth-token="$AUTH_TOKEN" --server="$SERVER" --grpc-web app sync "$APPLICATION"
+  argocd --server="$SERVER" --grpc-web app sync "$APPLICATION"
 
-  echo "Successfully deployed {{COMPONENT}} tag {{TAG}} to staging"
+  echo "Successfully deployed $COMPONENT tag $TAG to staging"
