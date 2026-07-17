@@ -1,5 +1,5 @@
 FROM ghcr.io/formancehq/base:22.04
-ADD https://raw.githubusercontent.com/formancehq/gateway/main/Caddyfile /etc/caddy/Caddyfile
+ADD Caddyfile /etc/caddy/Caddyfile
 COPY gateway /usr/bin/caddy
 ENV OTEL_SERVICE_NAME gateway
 ENTRYPOINT ["/usr/bin/caddy"]
