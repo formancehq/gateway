@@ -6,7 +6,7 @@ on:
       - main
       - releases/*
   pull_request:
-    types: [ assigned, opened, synchronize, reopened, labeled ]
+    types: [assigned, opened, synchronize, reopened, labeled]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -27,7 +27,7 @@ jobs:
   Dirty:
     runs-on: "namespace-profile-linux-amd64-4vcpu"
     steps:
-      - uses: 'namespacelabs/nscloud-checkout-action@v9'
+      - uses: "namespacelabs/nscloud-checkout-action@v9"
         with:
           fetch-depth: 0
       - name: Setup Env
@@ -55,7 +55,7 @@ jobs:
     needs:
       - Dirty
     steps:
-      - uses: 'namespacelabs/nscloud-checkout-action@v9'
+      - uses: "namespacelabs/nscloud-checkout-action@v9"
         with:
           fetch-depth: 0
       - name: Setup Env
@@ -74,11 +74,11 @@ jobs:
 
   GoReleaser:
     runs-on: "namespace-profile-linux-amd64-4vcpu"
-    if: contains(github.event.pull_request.labels.*.name, 'build-images') || github.ref == 'refs/heads/main' || github.event_name == 'merge_group'
+    if: contains(github.event.pull_request.labels.*.name, 'build-images') || contains(github.event.pull_request.labels.*.name, 'deploy-staging') || github.ref == 'refs/heads/main' || github.event_name == 'merge_group'
     needs:
       - Dirty
     steps:
-      - uses: 'namespacelabs/nscloud-checkout-action@v9'
+      - uses: "namespacelabs/nscloud-checkout-action@v9"
         with:
           fetch-depth: 0
       - name: Setup Env
@@ -102,19 +102,16 @@ jobs:
 
   Deploy:
     runs-on: "ubuntu-latest"
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || contains(github.event.pull_request.labels.*.name, 'deploy-staging')
     environment: staging
     needs:
       - GoReleaser
-      - Tests
     steps:
-      - uses: earthly/actions-setup@v1
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          version: "latest"
-      - uses: 'namespacelabs/nscloud-checkout-action@v9'
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
       - name: Tailscale
         uses: tailscale/github-action@v4
         with:
@@ -124,12 +121,7 @@ jobs:
       - name: "Deploy in staging"
         env:
           TAG: ${{ github.sha }}
-          COMPONENT: payments
-          ARGOCD_REGION_AUTH_TOKEN: ${{ secrets.ARGOCD_REGION_AUTH_TOKEN }}
+          AUTH_TOKEN: ${{ secrets.ARGOCD_REGION_AUTH_TOKEN }}
         run: >
-          earthly  
-          --no-output 
-          --secret AUTH_TOKEN=$ARGOCD_REGION_AUTH_TOKEN
-          +deploy-staging
-          --TAG=$TAG
-          --COMPONENT=$COMPONENT
+          nix --extra-experimental-features "nix-command" --extra-experimental-features "flakes"
+          develop --impure --command just deploy-staging $TAG
