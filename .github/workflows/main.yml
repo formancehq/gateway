@@ -35,8 +35,7 @@ jobs:
         with:
           token: ${{ secrets.NUMARY_GITHUB_TOKEN }}
       - run: >
-          nix --extra-experimental-features "nix-command" --extra-experimental-features "flakes"
-          develop --impure --command just pre-commit
+          nix develop --impure --command just pre-commit
         env:
           SPEAKEASY_API_KEY: ${{ secrets.SPEAKEASY_API_KEY }}
       - name: Get changed files
@@ -63,8 +62,7 @@ jobs:
         with:
           token: ${{ secrets.NUMARY_GITHUB_TOKEN }}
       - run: >
-          nix --extra-experimental-features "nix-command" --extra-experimental-features "flakes"
-          develop --impure --command just tests
+          nix develop --impure --command just tests
       - name: Upload coverage reports to Codecov with GitHub Action
         uses: codecov/codecov-action@v7.0.0
         with:
@@ -92,8 +90,7 @@ jobs:
           username: "NumaryBot"
           password: ${{ secrets.NUMARY_GITHUB_TOKEN }}
       - run: >
-          nix --extra-experimental-features "nix-command" --extra-experimental-features "flakes" 
-          develop --impure --command just release-ci
+          nix develop --impure --command just release-ci
         env:
           GITHUB_TOKEN: ${{ secrets.NUMARY_GITHUB_TOKEN }}
           SPEAKEASY_API_KEY: ${{ secrets.SPEAKEASY_API_KEY }}
@@ -108,13 +105,14 @@ jobs:
       - GoReleaser
       - Tests
     steps:
-      - uses: earthly/actions-setup@v1
+      - uses: 'actions/checkout@v7'
+        with:
+          fetch-depth: 0
+      - name: Install Earthly
+        uses: earthly/actions-setup@v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           version: "latest"
-      - uses: 'namespacelabs/nscloud-checkout-action@v9'
-        with:
-          fetch-depth: 0
       - name: Tailscale
         uses: tailscale/github-action@v4
         with:
