@@ -25,10 +25,13 @@ components:
       properties:
         name:
           type: string
+          description: Name of the component
         version:
           type: string
+          description: Version of the component currently deployed
         health:
           type: boolean
+          description: Whether the component is reporting itself healthy
       required:
         - name
         - version
@@ -38,10 +41,13 @@ components:
       properties:
         region:
           type: string
+          description: Region the stack is deployed in
         env:
           type: string
+          description: Environment the stack is deployed in
         versions:
           type: array
+          description: Version and health of each component in the stack
           items:
             $ref: '#/components/schemas/Version'
       required:
