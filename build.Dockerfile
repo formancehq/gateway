@@ -1,4 +1,4 @@
-FROM ghcr.io/formancehq/base:22.04
+FROM ghcr.io/formancehq/base:26.04
 ADD https://raw.githubusercontent.com/formancehq/gateway/main/Caddyfile /etc/caddy/Caddyfile
 ARG TARGETPLATFORM
 COPY $TARGETPLATFORM/gateway /usr/bin/caddy
